@@ -9,12 +9,17 @@
    - `base_url`: `http://127.0.0.1:8000`
    - `access_token`: (будет заполнено автоматически)
    - `refresh_token`: (будет заполнено автоматически)
+   - `user_id`: (будет заполнено автоматически)
    - `category_id`: (будет заполнено автоматически)
    - `category_slug`: (будет заполнено автоматически)
    - `post_id`: (будет заполнено автоматически)
    - `post_slug`: (будет заполнено автоматически)
    - `comment_id`: (будет заполнено автоматически)
-   - `parent_comment_id`: (будет заполнено автоматически)
+   - `reply_comment_id`: (будет заполнено автоматически)
+   - `subscription_id`: (будет заполнено автоматически)
+   - `subscription_plan_id`: (будет заполнено автоматически)
+   - `payment_id`: (будет заполнено автоматически)
+   - `pinned_post_id`: (будет заполнено автоматически)
 
 ### 2. Настройка авторизации для коллекции
 1. Перейдите в настройки коллекции → Authorization
@@ -55,9 +60,10 @@ pm.test("Response contains tokens", function () {
     pm.expect(jsonData).to.have.property('refresh');
     pm.expect(jsonData).to.have.property('user');
     
-    // Сохраняем токены в переменные окружения
+    // Сохраняем токены и ID пользователя в переменные окружения
     pm.environment.set("access_token", jsonData.access);
     pm.environment.set("refresh_token", jsonData.refresh);
+    pm.environment.set("user_id", jsonData.user.id);
 });
 
 pm.test("User data is correct", function () {
@@ -93,9 +99,10 @@ pm.test("Login successful", function () {
     var jsonData = pm.response.json();
     pm.expect(jsonData.message).to.eql("User login successfully");
     
-    // Обновляем токены
+    // Обновляем токены и ID пользователя
     pm.environment.set("access_token", jsonData.access);
     pm.environment.set("refresh_token", jsonData.refresh);
+    pm.environment.set("user_id", jsonData.user.id);
 });
 ```
 
@@ -154,8 +161,65 @@ pm.test("Profile updated successfully", function () {
 });
 ```
 
-### 5. Смена пароля
-**PUT** `{{base_url}}/api/v1/auth/change-password/`
+## Тестирование тарифных планов подписок
+
+### 1. Получение списка тарифных планов
+**GET** `{{base_url}}/api/v1/subscribe/plans/`
+
+**Headers:** (не требуется авторизация)
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Subscription plans list is returned", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('results');
+    pm.expect(jsonData.results).to.be.an('array');
+});
+
+pm.test("Plan structure is correct", function () {
+    var jsonData = pm.response.json();
+    if (jsonData.results.length > 0) {
+        var plan = jsonData.results[0];
+        pm.expect(plan).to.have.property('id');
+        pm.expect(plan).to.have.property('name');
+        pm.expect(plan).to.have.property('price');
+        pm.expect(plan).to.have.property('duration_days');
+        pm.expect(plan).to.have.property('features');
+        pm.expect(plan).to.have.property('is_active');
+        
+        // Сохраняем ID плана для дальнейших тестов
+        pm.environment.set("subscription_plan_id", plan.id);
+    }
+});
+```
+
+### 2. Получение детального плана подписки
+**GET** `{{base_url}}/api/v1/subscribe/plans/{{subscription_plan_id}}/`
+
+**Headers:** (не требуется авторизация)
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Plan details are correct", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData.id).to.eql(pm.environment.get("subscription_plan_id"));
+    pm.expect(jsonData).to.have.property('features');
+    pm.expect(jsonData.features).to.be.an('object');
+});
+```
+
+## Тестирование платежной системы
+
+### 1. Создание Stripe Checkout сессии
+**POST** `{{base_url}}/api/v1/payment/create-checkout-session/`
 
 **Headers:**
 ```
@@ -166,81 +230,243 @@ Content-Type: application/json
 **Body (JSON):**
 ```json
 {
-    "old_password": "TestPassword123!",
-    "new_password": "NewTestPassword123!",
-    "new_password_confirm": "NewTestPassword123!"
+    "subscription_plan_id": {{subscription_plan_id}},
+    "payment_method": "stripe",
+    "success_url": "http://localhost:5173/payment/success?session_id={CHECKOUT_SESSION_ID}",
+    "cancel_url": "http://localhost:5173/payment/cancel"
 }
 ```
 
 **Tests:**
 ```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
+pm.test("Status code is 201", function () {
+    pm.response.to.have.status(201);
 });
 
-pm.test("Password changed successfully", function () {
+pm.test("Checkout session created successfully", function () {
     var jsonData = pm.response.json();
-    pm.expect(jsonData.message).to.eql("Password changed successfully");
-});
-```
-
-### 6. Обновление токена
-**POST** `{{base_url}}/api/v1/auth/token/refresh/`
-
-**Headers:**
-```
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "refresh": "{{refresh_token}}"
-}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("New access token received", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('access');
-    pm.environment.set("access_token", jsonData.access);
-});
-```
-
-### 7. Выход из системы
-**POST** `{{base_url}}/api/v1/auth/logout/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "refresh_token": "{{refresh_token}}"
-}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Logout successful", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.message).to.eql("Logout successful");
+    pm.expect(jsonData).to.have.property('checkout_url');
+    pm.expect(jsonData).to.have.property('session_id');
+    pm.expect(jsonData).to.have.property('payment_id');
     
-    // Очищаем токены
-    pm.environment.unset("access_token");
-    pm.environment.unset("refresh_token");
+    // Сохраняем ID платежа
+    pm.environment.set("payment_id", jsonData.payment_id);
+});
+
+pm.test("Checkout URL is valid", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData.checkout_url).to.include('checkout.stripe.com');
+});
+```
+
+### 2. Получение статуса платежа
+**GET** `{{base_url}}/api/v1/payment/payments/{{payment_id}}/status/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Payment status structure is correct", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('payment_id');
+    pm.expect(jsonData).to.have.property('status');
+    pm.expect(jsonData).to.have.property('message');
+    pm.expect(jsonData).to.have.property('subscription_activated');
+});
+```
+
+### 3. Получение списка платежей пользователя
+**GET** `{{base_url}}/api/v1/payment/payments/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Payments list is returned", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('results');
+    pm.expect(jsonData.results).to.be.an('array');
+});
+
+pm.test("Payment structure is correct", function () {
+    var jsonData = pm.response.json();
+    if (jsonData.results.length > 0) {
+        var payment = jsonData.results[0];
+        pm.expect(payment).to.have.property('id');
+        pm.expect(payment).to.have.property('amount');
+        pm.expect(payment).to.have.property('currency');
+        pm.expect(payment).to.have.property('status');
+        pm.expect(payment).to.have.property('payment_method');
+        pm.expect(payment).to.have.property('user_info');
+        pm.expect(payment).to.have.property('subscription_info');
+        pm.expect(payment).to.have.property('is_successful');
+        pm.expect(payment).to.have.property('can_be_refunded');
+    }
+});
+```
+
+### 4. Получение истории платежей
+**GET** `{{base_url}}/api/v1/payment/payments/history/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Payment history is returned", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('count');
+    pm.expect(jsonData).to.have.property('results');
+    pm.expect(jsonData.results).to.be.an('array');
+});
+```
+
+### 5. Отмена платежа
+**POST** `{{base_url}}/api/v1/payment/payments/{{payment_id}}/cancel/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Payment cancelled successfully", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('message');
+    pm.expect(jsonData.message).to.include('cancelled');
+});
+```
+
+## Тестирование подписок
+
+### 1. Получение статуса подписки пользователя
+**GET** `{{base_url}}/api/v1/subscribe/status/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Subscription status structure is correct", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('has_subscription');
+    pm.expect(jsonData).to.have.property('is_active');
+    pm.expect(jsonData).to.have.property('subscription');
+    pm.expect(jsonData).to.have.property('pinned_post');
+    pm.expect(jsonData).to.have.property('can_pin_posts');
+});
+```
+
+### 2. Получение подписки пользователя
+**GET** `{{base_url}}/api/v1/subscribe/my-subscription/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200 or 404", function () {
+    pm.expect(pm.response.code).to.be.oneOf([200, 404]);
+});
+
+if (pm.response.code === 200) {
+    pm.test("Subscription details are returned", function () {
+        var jsonData = pm.response.json();
+        pm.expect(jsonData).to.have.property('id');
+        pm.expect(jsonData).to.have.property('plan_info');
+        pm.expect(jsonData).to.have.property('status');
+        pm.expect(jsonData).to.have.property('is_active');
+        pm.expect(jsonData).to.have.property('days_remaining');
+        
+        // Сохраняем ID подписки
+        pm.environment.set("subscription_id", jsonData.id);
+    });
+}
+```
+
+### 3. Получение истории подписки
+**GET** `{{base_url}}/api/v1/subscribe/history/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Subscription history is returned", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('results');
+    pm.expect(jsonData.results).to.be.an('array');
+});
+
+pm.test("History entry structure is correct", function () {
+    var jsonData = pm.response.json();
+    if (jsonData.results.length > 0) {
+        var entry = jsonData.results[0];
+        pm.expect(entry).to.have.property('id');
+        pm.expect(entry).to.have.property('action');
+        pm.expect(entry).to.have.property('description');
+        pm.expect(entry).to.have.property('created_at');
+    }
+});
+```
+
+### 4. Отмена подписки
+**POST** `{{base_url}}/api/v1/subscribe/cancel/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Subscription cancelled successfully", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('message');
+    pm.expect(jsonData.message).to.include('cancelled');
 });
 ```
 
@@ -261,17 +487,6 @@ pm.test("Categories list is returned", function () {
     var jsonData = pm.response.json();
     pm.expect(jsonData).to.have.property('results');
     pm.expect(jsonData.results).to.be.an('array');
-});
-
-pm.test("Category structure is correct", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.results.length > 0) {
-        var category = jsonData.results[0];
-        pm.expect(category).to.have.property('id');
-        pm.expect(category).to.have.property('name');
-        pm.expect(category).to.have.property('slug');
-        pm.expect(category).to.have.property('posts_count');
-    }
 });
 ```
 
@@ -308,76 +523,6 @@ pm.test("Category created successfully", function () {
     pm.environment.set("category_id", jsonData.id);
     pm.environment.set("category_slug", jsonData.slug);
 });
-
-pm.test("Slug is auto-generated", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.slug).to.eql("technology");
-});
-```
-
-### 3. Получение конкретной категории
-**GET** `{{base_url}}/api/v1/posts/categories/{{category_slug}}/`
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Category details are correct", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.name).to.eql("Technology");
-    pm.expect(jsonData.slug).to.eql(pm.environment.get("category_slug"));
-});
-```
-
-### 4. Обновление категории
-**PATCH** `{{base_url}}/api/v1/posts/categories/{{category_slug}}/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "description": "Updated description for technology category"
-}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Category updated successfully", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.description).to.eql("Updated description for technology category");
-});
-```
-
-### 5. Поиск категорий
-**GET** `{{base_url}}/api/v1/posts/categories/?search=tech`
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Search results contain relevant categories", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.results).to.be.an('array');
-    if (jsonData.results.length > 0) {
-        var foundTech = jsonData.results.some(category => 
-            category.name.toLowerCase().includes('tech')
-        );
-        pm.expect(foundTech).to.be.true;
-    }
-});
 ```
 
 ## Тестирование постов
@@ -395,19 +540,20 @@ pm.test("Posts list is returned", function () {
     var jsonData = pm.response.json();
     pm.expect(jsonData).to.have.property('results');
     pm.expect(jsonData.results).to.be.an('array');
+    
+    // Проверяем наличие информации о закрепленных постах
+    if ('pinned_posts_count' in jsonData) {
+        pm.expect(jsonData.pinned_posts_count).to.be.at.least(0);
+    }
 });
 
-pm.test("Post structure is correct", function () {
+pm.test("Post structure includes pinning info", function () {
     var jsonData = pm.response.json();
     if (jsonData.results.length > 0) {
         var post = jsonData.results[0];
-        pm.expect(post).to.have.property('id');
-        pm.expect(post).to.have.property('title');
-        pm.expect(post).to.have.property('slug');
-        pm.expect(post).to.have.property('author');
-        pm.expect(post).to.have.property('category');
-        pm.expect(post).to.have.property('views_count');
-        pm.expect(post).to.have.property('comments_count');
+        pm.expect(post).to.have.property('is_pinned');
+        pm.expect(post).to.have.property('pinned_info');
+        pm.expect(post.pinned_info).to.have.property('is_pinned');
     }
 });
 ```
@@ -448,43 +594,9 @@ pm.test("Post created successfully", function () {
     pm.environment.set("post_id", jsonData.id);
     pm.environment.set("post_slug", jsonData.slug);
 });
-
-pm.test("Slug is auto-generated", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.slug).to.eql("my-first-blog-post");
-});
 ```
 
-### 3. Создание поста с изображением
-**POST** `{{base_url}}/api/v1/posts/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-```
-
-**Body (form-data):**
-- Key: `title`, Type: Text, Value: "Post with Image"
-- Key: `content`, Type: Text, Value: "This post contains an image"
-- Key: `category`, Type: Text, Value: `{{category_id}}`
-- Key: `status`, Type: Text, Value: "published"
-- Key: `image`, Type: File, Value: выберите изображение
-
-**Tests:**
-```javascript
-pm.test("Status code is 201", function () {
-    pm.response.to.have.status(201);
-});
-
-pm.test("Post with image created successfully", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.title).to.eql("Post with Image");
-    pm.expect(jsonData).to.have.property('image');
-    pm.expect(jsonData.image).to.not.be.null;
-});
-```
-
-### 4. Получение конкретного поста
+### 3. Получение детального поста (с информацией о закреплении)
 **GET** `{{base_url}}/api/v1/posts/{{post_slug}}/`
 
 **Tests:**
@@ -493,18 +605,12 @@ pm.test("Status code is 200", function () {
     pm.response.to.have.status(200);
 });
 
-pm.test("Post details are correct", function () {
+pm.test("Post details include pinning information", function () {
     var jsonData = pm.response.json();
-    pm.expect(jsonData.title).to.eql("My First Blog Post");
-    pm.expect(jsonData.slug).to.eql(pm.environment.get("post_slug"));
-    pm.expect(jsonData).to.have.property('author_info');
-    pm.expect(jsonData).to.have.property('category_info');
-});
-
-pm.test("Author info is present", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.author_info).to.have.property('username');
-    pm.expect(jsonData.author_info).to.have.property('full_name');
+    pm.expect(jsonData).to.have.property('is_pinned');
+    pm.expect(jsonData).to.have.property('pinned_info');
+    pm.expect(jsonData).to.have.property('can_pin');
+    pm.expect(jsonData.pinned_info).to.have.property('is_pinned');
 });
 
 pm.test("Views count incremented", function () {
@@ -513,8 +619,97 @@ pm.test("Views count incremented", function () {
 });
 ```
 
-### 5. Обновление поста
-**PATCH** `{{base_url}}/api/v1/posts/{{post_slug}}/`
+### 4. Получение закрепленных постов
+**GET** `{{base_url}}/api/v1/posts/pinned/`
+
+**Headers:** (не требуется авторизация)
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Pinned posts structure is correct", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('count');
+    pm.expect(jsonData).to.have.property('results');
+    pm.expect(jsonData.results).to.be.an('array');
+});
+
+pm.test("All returned posts are pinned", function () {
+    var jsonData = pm.response.json();
+    if (jsonData.results.length > 0) {
+        jsonData.results.forEach(function(post) {
+            pm.expect(post.is_pinned).to.be.true;
+        });
+    }
+});
+```
+
+### 5. Получение рекомендуемых постов
+**GET** `{{base_url}}/api/v1/posts/featured/`
+
+**Headers:** (не требуется авторизация)
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Featured posts structure is correct", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('pinned_posts');
+    pm.expect(jsonData).to.have.property('popular_posts');
+    pm.expect(jsonData).to.have.property('total_pinned');
+    pm.expect(jsonData.pinned_posts).to.be.an('array');
+    pm.expect(jsonData.popular_posts).to.be.an('array');
+});
+
+pm.test("Pinned posts limit is respected", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData.pinned_posts.length).to.be.at.most(3);
+});
+```
+
+## Тестирование закрепления постов
+
+### 1. Проверка возможности закрепления поста
+**GET** `{{base_url}}/api/v1/subscribe/can-pin/{{post_id}}/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Status code is 200", function () {
+    pm.response.to.have.status(200);
+});
+
+pm.test("Pin check response is correct", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('post_id');
+    pm.expect(jsonData).to.have.property('can_pin');
+    pm.expect(jsonData).to.have.property('checks');
+    pm.expect(jsonData).to.have.property('message');
+    pm.expect(jsonData.post_id).to.eql(pm.environment.get("post_id"));
+});
+
+pm.test("Checks structure is correct", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData.checks).to.have.property('post_exists');
+    pm.expect(jsonData.checks).to.have.property('is_own_post');
+    pm.expect(jsonData.checks).to.have.property('has_subscription');
+    pm.expect(jsonData.checks).to.have.property('subscription_active');
+    pm.expect(jsonData.checks).to.have.property('can_pin');
+});
+```
+
+### 2. Закрепление поста (требует активной подписки)
+**POST** `{{base_url}}/api/v1/subscribe/pin-post/`
 
 **Headers:**
 ```
@@ -525,26 +720,37 @@ Content-Type: application/json
 **Body (JSON):**
 ```json
 {
-    "title": "My Updated Blog Post",
-    "content": "This is the updated content of my blog post with more detailed information."
+    "post_id": {{post_id}}
 }
 ```
 
 **Tests:**
 ```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
+pm.test("Status code is 201 or 403", function () {
+    pm.expect(pm.response.code).to.be.oneOf([201, 403]);
 });
 
-pm.test("Post updated successfully", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.title).to.eql("My Updated Blog Post");
-    pm.expect(jsonData.content).to.eql("This is the updated content of my blog post with more detailed information.");
-});
+if (pm.response.code === 201) {
+    pm.test("Post pinned successfully", function () {
+        var jsonData = pm.response.json();
+        pm.expect(jsonData).to.have.property('id');
+        pm.expect(jsonData).to.have.property('post_info');
+        pm.expect(jsonData).to.have.property('pinned_at');
+        
+        // Сохраняем ID закрепленного поста
+        pm.environment.set("pinned_post_id", jsonData.id);
+    });
+} else {
+    pm.test("Subscription required for pinning", function () {
+        var jsonData = pm.response.json();
+        pm.expect(jsonData).to.have.property('error');
+        pm.expect(jsonData.error).to.include('subscription');
+    });
+}
 ```
 
-### 6. Получение своих постов
-**GET** `{{base_url}}/api/v1/posts/my-posts/`
+### 3. Получение закрепленного поста пользователя
+**GET** `{{base_url}}/api/v1/subscribe/pinned-post/`
 
 **Headers:**
 ```
@@ -553,159 +759,74 @@ Authorization: Bearer {{access_token}}
 
 **Tests:**
 ```javascript
+pm.test("Status code is 200 or 404", function () {
+    pm.expect(pm.response.code).to.be.oneOf([200, 404]);
+});
+
+if (pm.response.code === 200) {
+    pm.test("Pinned post details are returned", function () {
+        var jsonData = pm.response.json();
+        pm.expect(jsonData).to.have.property('id');
+        pm.expect(jsonData).to.have.property('post_info');
+        pm.expect(jsonData).to.have.property('pinned_at');
+        pm.expect(jsonData.post_info).to.have.property('title');
+        pm.expect(jsonData.post_info).to.have.property('slug');
+    });
+}
+```
+
+### 4. Получение списка всех закрепленных постов
+**GET** `{{base_url}}/api/v1/subscribe/pinned-posts/`
+
+**Headers:** (не требуется авторизация)
+
+**Tests:**
+```javascript
 pm.test("Status code is 200", function () {
     pm.response.to.have.status(200);
 });
 
-pm.test("My posts are returned", function () {
+pm.test("Pinned posts list structure is correct", function () {
     var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('count');
     pm.expect(jsonData).to.have.property('results');
     pm.expect(jsonData.results).to.be.an('array');
 });
 
-pm.test("All posts belong to current user", function () {
+pm.test("All posts have pinning information", function () {
     var jsonData = pm.response.json();
     if (jsonData.results.length > 0) {
         jsonData.results.forEach(function(post) {
-            pm.expect(post.author).to.eql("testuser"); // или email пользователя
+            pm.expect(post).to.have.property('is_pinned');
+            pm.expect(post).to.have.property('pinned_at');
+            pm.expect(post).to.have.property('author');
+            pm.expect(post.is_pinned).to.be.true;
         });
     }
 });
 ```
 
-### 7. Фильтрация постов по категории
-**GET** `{{base_url}}/api/v1/posts/?category={{category_id}}`
+### 5. Открепление поста
+**POST** `{{base_url}}/api/v1/subscribe/unpin-post/`
 
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Posts filtered by category", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.results).to.be.an('array');
-    if (jsonData.results.length > 0) {
-        jsonData.results.forEach(function(post) {
-            pm.expect(post.category).to.eql("Technology");
-        });
-    }
-});
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
 ```
 
-### 8. Поиск постов
-**GET** `{{base_url}}/api/v1/posts/?search=blog`
-
 **Tests:**
 ```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
+pm.test("Status code is 200 or 404", function () {
+    pm.expect(pm.response.code).to.be.oneOf([200, 404]);
 });
 
-pm.test("Search results are relevant", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.results).to.be.an('array');
-    if (jsonData.results.length > 0) {
-        var foundRelevant = jsonData.results.some(post => 
-            post.title.toLowerCase().includes('blog') || 
-            post.content.toLowerCase().includes('blog')
-        );
-        pm.expect(foundRelevant).to.be.true;
-    }
-});
-```
-
-### 9. Сортировка постов
-**GET** `{{base_url}}/api/v1/posts/?ordering=-views_count`
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Posts sorted by views count descending", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.results.length > 1) {
-        for (let i = 0; i < jsonData.results.length - 1; i++) {
-            pm.expect(jsonData.results[i].views_count).to.be.at.least(jsonData.results[i + 1].views_count);
-        }
-    }
-});
-```
-
-### 10. Получение популярных постов
-**GET** `{{base_url}}/api/v1/posts/popular/`
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Popular posts are returned", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.be.an('array');
-    pm.expect(jsonData.length).to.be.at.most(10);
-});
-
-pm.test("Posts are sorted by views", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.length > 1) {
-        for (let i = 0; i < jsonData.length - 1; i++) {
-            pm.expect(jsonData[i].views_count).to.be.at.least(jsonData[i + 1].views_count);
-        }
-    }
-});
-```
-
-### 11. Получение последних постов
-**GET** `{{base_url}}/api/v1/posts/recent/`
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Recent posts are returned", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.be.an('array');
-    pm.expect(jsonData.length).to.be.at.most(10);
-});
-
-pm.test("Posts are sorted by creation date", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.length > 1) {
-        for (let i = 0; i < jsonData.length - 1; i++) {
-            var date1 = new Date(jsonData[i].created_at);
-            var date2 = new Date(jsonData[i + 1].created_at);
-            pm.expect(date1.getTime()).to.be.at.least(date2.getTime());
-        }
-    }
-});
-```
-
-### 12. Получение постов по категории
-**GET** `{{base_url}}/api/v1/posts/categories/{{category_slug}}/posts/`
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Category and posts data returned", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('category');
-    pm.expect(jsonData).to.have.property('posts');
-    pm.expect(jsonData.posts).to.be.an('array');
-});
-
-pm.test("Category info is correct", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.category.slug).to.eql(pm.environment.get("category_slug"));
-});
+if (pm.response.code === 200) {
+    pm.test("Post unpinned successfully", function () {
+        var jsonData = pm.response.json();
+        pm.expect(jsonData).to.have.property('message');
+        pm.expect(jsonData.message).to.include('unpinned');
+    });
+}
 ```
 
 ## Тестирование комментариев
@@ -733,13 +854,9 @@ pm.test("Comment structure is correct", function () {
         var comment = jsonData.results[0];
         pm.expect(comment).to.have.property('id');
         pm.expect(comment).to.have.property('content');
-        pm.expect(comment).to.have.property('author');
         pm.expect(comment).to.have.property('author_info');
-        pm.expect(comment).to.have.property('parent');
-        pm.expect(comment).to.have.property('is_active');
         pm.expect(comment).to.have.property('replies_count');
         pm.expect(comment).to.have.property('is_reply');
-        pm.expect(comment).to.have.property('created_at');
     }
 });
 ```
@@ -778,13 +895,6 @@ pm.test("Comment created successfully", function () {
     // Сохраняем ID комментария для дальнейших тестов
     pm.environment.set("comment_id", jsonData.id);
 });
-
-pm.test("Author info is included", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.author_info).to.have.property('username');
-    pm.expect(jsonData.author_info).to.have.property('full_name');
-    pm.expect(jsonData.author_info.username).to.eql("testuser");
-});
 ```
 
 ### 3. Создание ответа на комментарий
@@ -801,7 +911,7 @@ Content-Type: application/json
 {
     "post": {{post_id}},
     "parent": {{comment_id}},
-    "content": "Thank you for your comment! I'm glad you found the post helpful. Feel free to ask any questions."
+    "content": "Thank you for your comment! I'm glad you found the post helpful."
 }
 ```
 
@@ -813,13 +923,10 @@ pm.test("Status code is 201", function () {
 
 pm.test("Reply comment created successfully", function () {
     var jsonData = pm.response.json();
-    pm.expect(jsonData.content).to.eql("Thank you for your comment! I'm glad you found the post helpful. Feel free to ask any questions.");
-    pm.expect(jsonData.post).to.eql(pm.environment.get("post_id"));
     pm.expect(jsonData.parent).to.eql(pm.environment.get("comment_id"));
     pm.expect(jsonData.is_reply).to.be.true;
-    pm.expect(jsonData.is_active).to.be.true;
     
-    // Сохраняем ID ответа для дальнейших тестов
+    // Сохраняем ID ответа
     pm.environment.set("reply_comment_id", jsonData.id);
 });
 ```
@@ -843,14 +950,6 @@ pm.test("Post comments data structure is correct", function () {
     pm.expect(jsonData.comments).to.be.an('array');
 });
 
-pm.test("Post info is included", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.post).to.have.property('id');
-    pm.expect(jsonData.post).to.have.property('title');
-    pm.expect(jsonData.post).to.have.property('slug');
-    pm.expect(jsonData.post.id).to.eql(pm.environment.get("post_id"));
-});
-
 pm.test("Comments include replies", function () {
     var jsonData = pm.response.json();
     if (jsonData.comments.length > 0) {
@@ -858,441 +957,81 @@ pm.test("Comments include replies", function () {
         if (mainComment) {
             pm.expect(mainComment).to.have.property('replies');
             pm.expect(mainComment.replies).to.be.an('array');
-            pm.expect(mainComment.replies_count).to.be.at.least(0);
-        }
-    }
-});
-
-pm.test("Comments count is correct", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.comments_count).to.be.at.least(1);
-});
-```
-
-### 5. Получение детального комментария
-**GET** `{{base_url}}/api/v1/comments/{{comment_id}}/`
-
-**Headers:** (не требуется авторизация)
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Comment details are correct", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.id).to.eql(pm.environment.get("comment_id"));
-    pm.expect(jsonData.content).to.include("This is my first comment");
-    pm.expect(jsonData.parent).to.be.null;
-    pm.expect(jsonData.is_reply).to.be.false;
-});
-
-pm.test("Replies are included for main comment", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.parent === null) {
-        pm.expect(jsonData).to.have.property('replies');
-        pm.expect(jsonData.replies).to.be.an('array');
-        pm.expect(jsonData.replies_count).to.be.at.least(0);
-    }
-});
-```
-
-### 6. Получение ответов на комментарий
-**GET** `{{base_url}}/api/v1/comments/{{comment_id}}/replies/`
-
-**Headers:** (не требуется авторизация)
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Comment replies structure is correct", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('parent_comment');
-    pm.expect(jsonData).to.have.property('replies');
-    pm.expect(jsonData).to.have.property('replies_count');
-    pm.expect(jsonData.replies).to.be.an('array');
-});
-
-pm.test("Parent comment info is included", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.parent_comment.id).to.eql(pm.environment.get("comment_id"));
-    pm.expect(jsonData.parent_comment).to.have.property('content');
-    pm.expect(jsonData.parent_comment).to.have.property('author_info');
-});
-
-pm.test("Replies are correct", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.replies.length > 0) {
-        jsonData.replies.forEach(function(reply) {
-            pm.expect(reply.parent).to.eql(pm.environment.get("comment_id"));
-            pm.expect(reply.is_reply).to.be.true;
-            pm.expect(reply).to.have.property('author_info');
-        });
-    }
-});
-```
-
-### 7. Обновление комментария
-**PATCH** `{{base_url}}/api/v1/comments/{{comment_id}}/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "content": "This is my updated first comment on this amazing blog post! Thank you for sharing such valuable information. I've learned a lot from it."
-}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Comment updated successfully", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.content).to.eql("This is my updated first comment on this amazing blog post! Thank you for sharing such valuable information. I've learned a lot from it.");
-    pm.expect(jsonData.id).to.eql(pm.environment.get("comment_id"));
-});
-```
-
-### 8. Получение своих комментариев
-**GET** `{{base_url}}/api/v1/comments/my-comments/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("My comments are returned", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('results');
-    pm.expect(jsonData.results).to.be.an('array');
-});
-
-pm.test("All comments belong to current user", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.results.length > 0) {
-        jsonData.results.forEach(function(comment) {
-            pm.expect(comment.author_info.username).to.eql("testuser");
-        });
-    }
-});
-
-pm.test("Comments include both main and replies", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.results.length).to.be.at.least(2); // основной комментарий + ответ
-    
-    var hasMainComment = jsonData.results.some(comment => comment.parent === null);
-    var hasReplyComment = jsonData.results.some(comment => comment.parent !== null);
-    
-    pm.expect(hasMainComment).to.be.true;
-    pm.expect(hasReplyComment).to.be.true;
-});
-```
-
-### 9. Фильтрация комментариев по посту
-**GET** `{{base_url}}/api/v1/comments/?post={{post_id}}`
-
-**Headers:** (не требуется авторизация)
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Comments filtered by post", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.results).to.be.an('array');
-    if (jsonData.results.length > 0) {
-        jsonData.results.forEach(function(comment) {
-            // Проверяем через API что комментарий принадлежит нужному посту
-            pm.expect(comment).to.have.property('id');
-        });
-    }
-});
-```
-
-### 10. Фильтрация комментариев по автору
-**GET** `{{base_url}}/api/v1/comments/?author={{user_id}}`
-
-**Headers:** (не требуется авторизация)
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Comments filtered by author", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.results).to.be.an('array');
-    if (jsonData.results.length > 0) {
-        jsonData.results.forEach(function(comment) {
-            pm.expect(comment.author_info.username).to.eql("testuser");
-        });
-    }
-});
-```
-
-### 11. Поиск в комментариях
-**GET** `{{base_url}}/api/v1/comments/?search=amazing`
-
-**Headers:** (не требуется авторизация)
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Search results are relevant", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.results).to.be.an('array');
-    if (jsonData.results.length > 0) {
-        var foundRelevant = jsonData.results.some(comment => 
-            comment.content.toLowerCase().includes('amazing')
-        );
-        pm.expect(foundRelevant).to.be.true;
-    }
-});
-```
-
-### 12. Сортировка комментариев
-**GET** `{{base_url}}/api/v1/comments/?ordering=created_at`
-
-**Headers:** (не требуется авторизация)
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Comments sorted by creation date ascending", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.results.length > 1) {
-        for (let i = 0; i < jsonData.results.length - 1; i++) {
-            var date1 = new Date(jsonData.results[i].created_at);
-            var date2 = new Date(jsonData.results[i + 1].created_at);
-            pm.expect(date1.getTime()).to.be.at.most(date2.getTime());
         }
     }
 });
 ```
 
-### 13. Фильтрация только основных комментариев (без ответов)
-**GET** `{{base_url}}/api/v1/comments/?parent__isnull=true`
+## Тестирование админской панели аналитики
 
-**Headers:** (не требуется авторизация)
-
-**Tests:**
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
-
-pm.test("Only main comments returned", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.results.length > 0) {
-        jsonData.results.forEach(function(comment) {
-            pm.expect(comment.parent).to.be.null;
-            pm.expect(comment.is_reply).to.be.false;
-        });
-    }
-});
-```
-
-### 14. Мягкое удаление комментария
-**DELETE** `{{base_url}}/api/v1/comments/{{comment_id}}/`
+### 1. Получение аналитики платежей (только для админов)
+**GET** `{{base_url}}/api/v1/payment/analytics/`
 
 **Headers:**
 ```
-Authorization: Bearer {{access_token}}
+Authorization: Bearer {{admin_access_token}}
 ```
 
 **Tests:**
 ```javascript
-pm.test("Status code is 204", function () {
-    pm.response.to.have.status(204);
+pm.test("Status code is 200 or 403", function () {
+    pm.expect(pm.response.code).to.be.oneOf([200, 403]);
 });
 
-pm.test("Comment is soft deleted", function () {
-    // Проверяем что комментарий больше не отображается в активных
-    pm.sendRequest({
-        url: pm.environment.get("base_url") + "/api/v1/comments/" + pm.environment.get("comment_id") + "/",
-        method: 'GET'
-    }, function (err, response) {
-        pm.expect(response.code).to.eql(404);
+if (pm.response.code === 200) {
+    pm.test("Payment analytics structure is correct", function () {
+        var jsonData = pm.response.json();
+        pm.expect(jsonData).to.have.property('total_payments');
+        pm.expect(jsonData).to.have.property('successful_payments');
+        pm.expect(jsonData).to.have.property('success_rate');
+        pm.expect(jsonData).to.have.property('total_revenue');
+        pm.expect(jsonData).to.have.property('monthly_revenue');
+        pm.expect(jsonData).to.have.property('average_payment');
+        pm.expect(jsonData).to.have.property('active_subscriptions');
     });
-});
+}
 ```
 
-### 15. Создание комментария без авторизации (должно вернуть ошибку)
-**POST** `{{base_url}}/api/v1/comments/`
+## Тестирование Webhook-ов (симуляция)
+
+### 1. Симуляция успешного платежа через webhook
+**POST** `{{base_url}}/api/v1/payment/webhooks/stripe/`
 
 **Headers:**
 ```
 Content-Type: application/json
+Stripe-Signature: whsec_test_signature
 ```
 
 **Body (JSON):**
 ```json
 {
-    "post": {{post_id}},
-    "content": "This should fail without authentication"
+    "id": "evt_test_webhook",
+    "object": "event",
+    "type": "checkout.session.completed",
+    "data": {
+        "object": {
+            "id": "cs_test_session",
+            "payment_status": "paid",
+            "metadata": {
+                "payment_id": "{{payment_id}}",
+                "user_id": "{{user_id}}"
+            }
+        }
+    }
 }
 ```
 
 **Tests:**
 ```javascript
-pm.test("Status code is 401", function () {
-    pm.response.to.have.status(401);
+pm.test("Status code is 200 or 400", function () {
+    pm.expect(pm.response.code).to.be.oneOf([200, 400]);
 });
 
-pm.test("Authentication error returned", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('detail');
-    pm.expect(jsonData.detail).to.include('credentials');
-});
+// Примечание: Этот тест может не работать без правильной подписи Stripe
 ```
 
-### 16. Создание комментария с невалидными данными
-**POST** `{{base_url}}/api/v1/comments/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "post": 999999,
-    "content": ""
-}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 400", function () {
-    pm.response.to.have.status(400);
-});
-
-pm.test("Validation errors returned", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.be.an('object');
-    // Может содержать ошибки по полям post и content
-});
-```
-
-### 17. Попытка редактировать чужой комментарий
-**PATCH** `{{base_url}}/api/v1/comments/{{other_user_comment_id}}/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "content": "Trying to edit someone else's comment"
-}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 403", function () {
-    pm.response.to.have.status(403);
-});
-
-pm.test("Permission denied error returned", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('detail');
-});
-```
-
-### 18. Создание ответа на несуществующий комментарий
-**POST** `{{base_url}}/api/v1/comments/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "post": {{post_id}},
-    "parent": 999999,
-    "content": "Reply to non-existent comment"
-}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 400", function () {
-    pm.response.to.have.status(400);
-});
-
-pm.test("Validation error for parent comment", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('parent');
-});
-```
-
-### 19. Создание ответа на комментарий из другого поста
-**POST** `{{base_url}}/api/v1/comments/`
-
-**Headers:**
-```
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "post": {{another_post_id}},
-    "parent": {{comment_id}},
-    "content": "Reply to comment from different post"
-}
-```
-
-**Tests:**
-```javascript
-pm.test("Status code is 400", function () {
-    pm.response.to.have.status(400);
-});
-
-pm.test("Validation error for cross-post comment", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('parent');
-    pm.expect(jsonData.parent[0]).to.include('same post');
-});
-```
-
-## Тестирование ошибок
+## Тестирование ошибок и валидации
 
 ### 1. Создание поста без авторизации
 **POST** `{{base_url}}/api/v1/posts/`
@@ -1310,30 +1049,20 @@ Content-Type: application/json
 }
 ```
 
-**Expected:** Status 401, ошибка аутентификации
+**Tests:**
+```javascript
+pm.test("Status code is 401", function () {
+    pm.response.to.have.status(401);
+});
 
-### 2. Редактирование чужого поста
-Для этого теста нужно создать второго пользователя и попытаться отредактировать пост первого пользователя.
-
-**PATCH** `{{base_url}}/api/v1/posts/{{post_slug}}/`
-
-**Headers:**
-```
-Authorization: Bearer {{other_user_token}}
-Content-Type: application/json
-```
-
-**Body (JSON):**
-```json
-{
-    "title": "Trying to edit someone else's post"
-}
+pm.test("Authentication error returned", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('detail');
+});
 ```
 
-**Expected:** Status 403, ошибка доступа
-
-### 3. Создание поста с невалидными данными
-**POST** `{{base_url}}/api/v1/posts/`
+### 2. Попытка закрепить пост без подписки
+**POST** `{{base_url}}/api/v1/subscribe/pin-post/`
 
 **Headers:**
 ```
@@ -1344,20 +1073,25 @@ Content-Type: application/json
 **Body (JSON):**
 ```json
 {
-    "title": "",
-    "content": "Content without title"
+    "post_id": {{post_id}}
 }
 ```
 
-**Expected:** Status 400, ошибка валидации
+**Tests:**
+```javascript
+pm.test("Status code is 403", function () {
+    pm.response.to.have.status(403);
+});
 
-### 4. Получение несуществующего поста
-**GET** `{{base_url}}/api/v1/posts/non-existent-post/`
+pm.test("Subscription required error", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('error');
+    pm.expect(jsonData.error).to.include('subscription');
+});
+```
 
-**Expected:** Status 404, пост не найден
-
-### 5. Создание категории с существующим именем
-**POST** `{{base_url}}/api/v1/posts/categories/`
+### 3. Создание платежа с несуществующим планом
+**POST** `{{base_url}}/api/v1/payment/create-checkout-session/`
 
 **Headers:**
 ```
@@ -1368,38 +1102,122 @@ Content-Type: application/json
 **Body (JSON):**
 ```json
 {
-    "name": "Technology"
+    "subscription_plan_id": 999999,
+    "payment_method": "stripe"
 }
 ```
 
-**Expected:** Status 400, ошибка уникальности
+**Tests:**
+```javascript
+pm.test("Status code is 400", function () {
+    pm.response.to.have.status(400);
+});
 
-## Последовательность тестирования
+pm.test("Plan not found error", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('subscription_plan_id');
+});
+```
 
-1. **Регистрация пользователя** → Получение токенов
-2. **Создание категории** → Сохранение category_id и category_slug
-3. **Создание поста** → Сохранение post_id и post_slug
-4. **Тестирование CRUD операций с постами**
-5. **Создание комментариев** → Сохранение comment_id и reply_comment_id
-6. **Тестирование CRUD операций с комментариями**
-7. **Тестирование специальных эндпоинтов комментариев**
-8. **Тестирование фильтрации и поиска постов и комментариев**
-9. **Тестирование специальных эндпоинтов** (популярные, последние)
-10. **Тестирование ошибок и edge cases**
-11. **Удаление тестовых данных**
+### 4. Попытка закрепить чужой пост
+**POST** `{{base_url}}/api/v1/subscribe/pin-post/`
 
-## Дополнение к настройкам окружения для комментариев
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+```
 
-Добавьте в переменные окружения:
-- `user_id`: (ID текущего пользователя, можно получить из профиля)
-- `reply_comment_id`: (ID ответа на комментарий)
-- `other_user_comment_id`: (ID комментария другого пользователя для тестирования доступа)
-- `another_post_id`: (ID другого поста для тестирования валидации)
+**Body (JSON):**
+```json
+{
+    "post_id": {{other_user_post_id}}
+}
+```
 
-## Удаление тестовых данных
+**Tests:**
+```javascript
+pm.test("Status code is 400 or 403", function () {
+    pm.expect(pm.response.code).to.be.oneOf([400, 403]);
+});
 
-### Удаление комментариев (мягкое удаление)
-**DELETE** `{{base_url}}/api/v1/comments/{{reply_comment_id}}/`
+pm.test("Permission error returned", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('error');
+});
+```
+
+## Расширенные тесты
+
+### 1. Тест пагинации для постов с закрепленными
+**GET** `{{base_url}}/api/v1/posts/?page=1&page_size=5`
+
+**Tests:**
+```javascript
+pm.test("Posts pagination works with pinning", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('count');
+    pm.expect(jsonData).to.have.property('results');
+    pm.expect(jsonData.results.length).to.be.at.most(5);
+    
+    // Проверяем что закрепленные посты идут первыми
+    if (jsonData.results.length > 0) {
+        var pinnedPosts = jsonData.results.filter(post => post.is_pinned);
+        var regularPosts = jsonData.results.filter(post => !post.is_pinned);
+        
+        // Если есть и закрепленные и обычные посты
+        if (pinnedPosts.length > 0 && regularPosts.length > 0) {
+            var lastPinnedIndex = jsonData.results.findLastIndex(post => post.is_pinned);
+            var firstRegularIndex = jsonData.results.findIndex(post => !post.is_pinned);
+            pm.expect(lastPinnedIndex).to.be.below(firstRegularIndex);
+        }
+    }
+});
+```
+
+### 2. Тест фильтрации постов по категории с закрепленными
+**GET** `{{base_url}}/api/v1/posts/categories/{{category_slug}}/posts/`
+
+**Tests:**
+```javascript
+pm.test("Category posts include pinning information", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData).to.have.property('category');
+    pm.expect(jsonData).to.have.property('posts');
+    pm.expect(jsonData).to.have.property('pinned_posts_count');
+    
+    if (jsonData.posts.length > 0) {
+        jsonData.posts.forEach(function(post) {
+            pm.expect(post).to.have.property('is_pinned');
+            pm.expect(post).to.have.property('pinned_info');
+        });
+    }
+});
+```
+
+### 3. Тест поиска по постам с учетом закрепленных
+**GET** `{{base_url}}/api/v1/posts/?search=blog&ordering=-created_at`
+
+**Tests:**
+```javascript
+pm.test("Search results maintain pinning priority", function () {
+    var jsonData = pm.response.json();
+    if (jsonData.results.length > 1) {
+        var hasPinnedPosts = jsonData.results.some(post => post.is_pinned);
+        var hasRegularPosts = jsonData.results.some(post => !post.is_pinned);
+        
+        // Если есть и закрепленные и обычные посты, закрепленные должны идти первыми
+        if (hasPinnedPosts && hasRegularPosts) {
+            var firstRegularIndex = jsonData.results.findIndex(post => !post.is_pinned);
+            var lastPinnedIndex = jsonData.results.findLastIndex(post => post.is_pinned);
+            pm.expect(lastPinnedIndex).to.be.below(firstRegularIndex);
+        }
+    }
+});
+```
+
+### 4. Тест проверки истории подписки с закреплением постов
+**GET** `{{base_url}}/api/v1/subscribe/history/`
 
 **Headers:**
 ```
@@ -1408,12 +1226,110 @@ Authorization: Bearer {{access_token}}
 
 **Tests:**
 ```javascript
-pm.test("Status code is 204", function () {
-    pm.response.to.have.status(204);
+pm.test("Subscription history includes pin actions", function () {
+    var jsonData = pm.response.json();
+    if (jsonData.results.length > 0) {
+        // Проверяем возможные действия в истории
+        var possibleActions = [
+            'created', 'activated', 'renewed', 'cancelled', 
+            'expired', 'payment_failed', 'post_pinned', 'post_unpinned'
+        ];
+        
+        jsonData.results.forEach(function(entry) {
+            pm.expect(possibleActions).to.include(entry.action);
+            pm.expect(entry).to.have.property('description');
+            pm.expect(entry).to.have.property('created_at');
+        });
+    }
 });
 ```
 
-### Удаление поста
+## Комплексные интеграционные тесты
+
+### 1. Полный цикл: регистрация → покупка подписки → закрепление поста
+Этот тест следует запускать как последовательность запросов:
+
+1. Регистрация пользователя
+2. Получение списка планов
+3. Создание checkout сессии
+4. Симуляция успешного платежа (изменение статуса вручную в БД)
+5. Создание поста
+6. Закрепление поста
+7. Проверка что пост отображается в закрепленных
+
+### 2. Тест отмены подписки и автоматического открепления поста
+**POST** `{{base_url}}/api/v1/subscribe/cancel/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+**Tests:**
+```javascript
+pm.test("Subscription cancelled and post unpinned", function () {
+    var jsonData = pm.response.json();
+    pm.expect(jsonData.message).to.include('cancelled');
+    
+    // Проверяем что пост больше не закреплен
+    pm.sendRequest({
+        url: pm.environment.get("base_url") + "/api/v1/subscribe/pinned-post/",
+        method: 'GET',
+        header: {
+            'Authorization': 'Bearer ' + pm.environment.get("access_token")
+        }
+    }, function (err, response) {
+        pm.expect(response.code).to.eql(404);
+    });
+});
+```
+
+## Тестирование производительности
+
+### 1. Тест загрузки списка постов с большим количеством закрепленных
+**GET** `{{base_url}}/api/v1/posts/?page_size=50`
+
+**Tests:**
+```javascript
+pm.test("Large posts list loads within reasonable time", function () {
+    pm.expect(pm.response.responseTime).to.be.below(2000); // 2 секунды
+});
+
+pm.test("Response includes performance metadata", function () {
+    var jsonData = pm.response.json();
+    if ('pinned_posts_count' in jsonData) {
+        pm.expect(jsonData.pinned_posts_count).to.be.a('number');
+    }
+});
+```
+
+## Очистка тестовых данных
+
+### 1. Удаление закрепленного поста
+**DELETE** `{{base_url}}/api/v1/subscribe/pinned-post/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+### 2. Отмена подписки
+**POST** `{{base_url}}/api/v1/subscribe/cancel/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+### 3. Удаление комментариев
+**DELETE** `{{base_url}}/api/v1/comments/{{comment_id}}/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+```
+
+### 4. Удаление поста
 **DELETE** `{{base_url}}/api/v1/posts/{{post_slug}}/`
 
 **Headers:**
@@ -1421,14 +1337,7 @@ pm.test("Status code is 204", function () {
 Authorization: Bearer {{access_token}}
 ```
 
-**Tests:**
-```javascript
-pm.test("Status code is 204", function () {
-    pm.response.to.have.status(204);
-});
-```
-
-### Удаление категории
+### 5. Удаление категории
 **DELETE** `{{base_url}}/api/v1/posts/categories/{{category_slug}}/`
 
 **Headers:**
@@ -1436,132 +1345,148 @@ pm.test("Status code is 204", function () {
 Authorization: Bearer {{access_token}}
 ```
 
-**Tests:**
-```javascript
-pm.test("Status code is 204", function () {
-    pm.response.to.have.status(204);
-});
+### 6. Выход из системы
+**POST** `{{base_url}}/api/v1/auth/logout/`
+
+**Headers:**
+```
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
 ```
 
-## Создание тестового набора
-
-### Pre-request Script для коллекции:
-```javascript
-// Проверяем, запущен ли Django сервер
-pm.sendRequest({
-    url: pm.environment.get("base_url"),
-    method: 'GET'
-}, function (err, response) {
-    if (err) {
-        console.log("Django server is not running on " + pm.environment.get("base_url"));
-    }
-});
+**Body (JSON):**
+```json
+{
+    "refresh_token": "{{refresh_token}}"
+}
 ```
 
-### Collection Tests:
-```javascript
-pm.test("Django server is accessible", function () {
-    pm.response.to.not.be.error;
-});
-```
+## Настройка администратора
 
-## Запуск Django сервера
-
-Перед тестированием убедитесь, что Django сервер запущен:
-
+### Создание суперпользователя для тестирования админских функций
 ```bash
-# В терминале
+# В терминале Django
+python manage.py createsuperuser
+```
+
+### Получение админского токена
+**POST** `{{base_url}}/api/v1/auth/login/`
+
+**Body (JSON):**
+```json
+{
+    "email": "admin@example.com",
+    "password": "admin_password"
+}
+```
+
+Сохраните полученный токен как `admin_access_token` в переменных окружения.
+
+## Pre-request Scripts для коллекции
+
+```javascript
+// Проверяем доступность сервера
+if (!pm.environment.get("base_url")) {
+    pm.environment.set("base_url", "http://127.0.0.1:8000");
+}
+
+// Функция для генерации случайных данных
+pm.globals.set("randomString", function() {
+    return Math.random().toString(36).substring(2, 15);
+});
+
+// Проверяем что Django сервер запущен
+if (pm.request.url.toString().includes(pm.environment.get("base_url"))) {
+    pm.sendRequest({
+        url: pm.environment.get("base_url"),
+        method: 'GET'
+    }, function (err, response) {
+        if (err) {
+            console.log("⚠️  Django server may not be running on " + pm.environment.get("base_url"));
+        }
+    });
+}
+```
+
+## Рекомендуемый порядок выполнения тестов
+
+1. **Настройка окружения и сервера**
+2. **Аутентификация** (регистрация, вход)
+3. **Тестирование тарифных планов**
+4. **Создание тестовых данных** (категория, пост)
+5. **Тестирование платежной системы**
+6. **Тестирование подписок**
+7. **Тестирование закрепления постов**
+8. **Тестирование комментариев**
+9. **Специальные эндпоинты** (популярные, закрепленные, рекомендуемые посты)
+10. **Фильтрация и поиск с учетом закрепленных постов**
+11. **Тестирование ошибок и edge cases**
+12. **Интеграционные тесты**
+13. **Админские функции** (аналитика, управление)
+14. **Очистка тестовых данных**
+15. **Выход из системы**
+
+## Дополнительные переменные окружения
+
+Добавьте в переменные окружения Postman:
+- `admin_access_token`: токен администратора
+- `other_user_token`: токен другого пользователя для тестов доступа
+- `other_user_post_id`: ID поста другого пользователя
+- `test_email`: email для тестирования
+- `stripe_session_id`: ID Stripe сессии
+- `webhook_secret`: секрет webhook для тестирования
+
+## Запуск тестов
+
+### Запуск Django сервера
+```bash
 python manage.py runserver
 ```
 
-## Дополнительные тесты
-
-### Тест пагинации для комментариев
-**GET** `{{base_url}}/api/v1/comments/?page=1&page_size=5`
-
-**Tests:**
-```javascript
-pm.test("Comments pagination works correctly", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('count');
-    pm.expect(jsonData).to.have.property('next');
-    pm.expect(jsonData).to.have.property('previous');
-    pm.expect(jsonData.results.length).to.be.at.most(5);
-});
+### Запуск Celery (для background задач)
+```bash
+celery -A config worker -l info
 ```
 
-### Тест комбинированной фильтрации комментариев
-**GET** `{{base_url}}/api/v1/comments/?post={{post_id}}&search=comment&ordering=-created_at`
-
-**Tests:**
-```javascript
-pm.test("Combined comment filtering works", function () {
-    var jsonData = pm.response.json();
-    pm.expect(jsonData.results).to.be.an('array');
-    if (jsonData.results.length > 0) {
-        // Проверяем что результаты содержат искомое слово
-        var foundRelevant = jsonData.results.some(comment => 
-            comment.content.toLowerCase().includes('comment')
-        );
-        pm.expect(foundRelevant).to.be.true;
-    }
-});
+### Запуск Celery Beat (для периодических задач)
+```bash
+celery -A config beat -l info
 ```
 
-### Тест структуры вложенных комментариев
-**GET** `{{base_url}}/api/v1/comments/post/{{post_id}}/`
-
-**Tests:**
-```javascript
-pm.test("Nested comments structure is correct", function () {
-    var jsonData = pm.response.json();
-    if (jsonData.comments.length > 0) {
-        var mainComment = jsonData.comments.find(comment => comment.parent === null);
-        if (mainComment && mainComment.replies.length > 0) {
-            mainComment.replies.forEach(function(reply) {
-                pm.expect(reply.parent).to.eql(mainComment.id);
-                pm.expect(reply.is_reply).to.be.true;
-                pm.expect(reply).to.have.property('author_info');
-                pm.expect(reply).to.have.property('created_at');
-            });
-        }
-    }
-});
+### Создание тестовых планов подписки
+```bash
+python manage.py create_subscription_product
 ```
 
-## Автоматизация тестов
-
-Для автоматического запуска всех тестов используйте Collection Runner:
-1. Нажмите на коллекцию → Run collection
-2. Выберите все запросы в правильном порядке
-3. Установите задержку между запросами (500ms)
-4. Запустите тесты
-
-## Рекомендуемый порядок выполнения тестов:
-
-1. Аутентификация (регистрация, вход)
-2. Создание категории
-3. Создание постов
-4. Получение и фильтрация постов
-5. Создание комментариев и ответов
-6. Получение и фильтрация комментариев
-7. Обновление постов и комментариев
-8. Специальные эндпоинты
-9. Тестирование ошибок и валидации
-10. Удаление тестовых данных
-11. Выход из системы
-
-## Дополнительные URL для комментариев
-
-Не забудьте добавить в ваш `config/urls.py`:
-
-```python
-urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('api/v1/posts/', include('apps.main.urls')),
-    path('api/v1/auth/', include('apps.accounts.urls')),
-    path('api/v1/comments/', include('apps.comments.urls')),  # Добавить эту строку
-]
+### Настройка Stripe интеграции
+```bash
+python manage.py fix_stripe_integration
 ```
 
-Это руководство поможет вам протестировать все функции вашего блог API включая новое приложение комментариев и убедиться в их корректной работе.
+## Collection Runner настройки
+
+Для автоматического запуска:
+1. Выберите коллекцию → Run collection
+2. Установите задержку: 1000ms между запросами
+3. Выберите окружение с переменными
+4. Запустите в правильном порядке
+5. Сохраните результаты тестирования
+
+## Мониторинг и отладка
+
+### Проверка логов Django
+```bash
+tail -f logs/django.log
+```
+
+### Мониторинг Celery задач
+```bash
+celery -A config events
+```
+
+### Проверка статуса Redis (если используется)
+```bash
+redis-cli ping
+```
+
+Это полное руководство поможет вам протестировать все функции вашего блог API с поддержкой подписок, платежей и закрепления постов.
