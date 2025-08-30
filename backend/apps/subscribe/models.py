@@ -5,57 +5,56 @@ from datetime import timedelta
 
 
 class SubscriptionPlan(models.Model):
-    """Модель тарифного плана подписки"""
-    name = models.CharField(max_length=100)
+    """Модель тарифного плана для ассистента Octal Assistance."""
+    name = models.CharField(max_length=100, unique=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     duration_days = models.PositiveIntegerField(default=30)
-    stripe_price_id = models.CharField(max_length=255, unique=True)
-    features = models.JSONField(default=dict, help_text="Список возможностей подписки")
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    features = models.JSONField(default=dict, help_text="Возможности тарифного плана (например, кол-во ботов, кастомные промпты)")
+    is_active = models.BooleanField(default=True, help_text="Активен ли тариф для выбора пользователями")
 
     class Meta:
         db_table = 'subscription_plans'
-        verbose_name = 'Subscription Plan'
-        verbose_name_plural = 'Subscription Plans'
+        verbose_name = 'Тарифный план'
+        verbose_name_plural = 'Тарифные планы'
         ordering = ['price']
 
     def __str__(self):
-        return f"{self.name} - ${self.price}"
-    
+        return f"{self.name} - {self.price} руб."
+
 
 class Subscription(models.Model):
-    """Модель подписки пользователя"""
+    """Модель подписки пользователя на тарифный план."""
     STATUS_CHOICES = [
-        ('active', 'Active'),
-        ('expired', 'Expired'),
-        ('cancelled', 'Cancelled'),
-        ('pending', 'Pending'),
+        ('active', 'Активна'),
+        ('expired', 'Истекла'),
+        ('cancelled', 'Отменена'),
+        ('pending', 'В ожидании'),
     ]
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='subscription'
+        related_name='subscription',
+        verbose_name='Пользователь'
     )
     plan = models.ForeignKey(
         SubscriptionPlan,
-        on_delete=models.CASCADE,
-        related_name='subscriptions'
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='subscriptions',
+        verbose_name='Тарифный план'
     )
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    start_date = models.DateTimeField()
-    end_date = models.DateTimeField()
-    stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True)
-    auto_renew = models.BooleanField(default=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name='Статус')
+    start_date = models.DateTimeField(verbose_name='Дата начала')
+    end_date = models.DateTimeField(verbose_name='Дата окончания')
+    auto_renew = models.BooleanField(default=False, verbose_name='Автопродление')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'subscriptions'
-        verbose_name = 'Subscription'
-        verbose_name_plural = 'Subscriptions'
+        verbose_name = 'Подписка'
+        verbose_name_plural = 'Подписки'
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['user', 'status']),
@@ -63,103 +62,41 @@ class Subscription(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.user.username} - {self.plan.name} ({self.status})"
-    
+        return f"Подписка {self.user.username} на {self.plan.name} ({self.get_status_display()})"
+
     @property
     def is_active(self):
-        """Проверяет, активная ли подписка"""
-        return (
-            self.status == 'active' and
-            self.end_date > timezone.now()
-        )
-    
-    @property
-    def days_remaining(self):
-        """Возвращает количество дней до окончания подписки"""
-        if not self.is_active:
-            return 0
-        
-        delta = self.end_date - timezone.now()
-        return max(0, delta.days)
-    
-    def extend_subscription(self, days=30):
-        """Продлевает подписку на указанное количество дней"""
-        if self.is_active:
-            self.end_date += timedelta(days=days)
-        else:
-            self.start_date = timezone.now()
-            self.end_date = self.start_date + timedelta(days)
-            self.status = 'active'
-        self.save()
-
-    def cancel(self):
-        """Отменяет подписку"""
-        self.status = 'cancelled'
-        self.auto_renew = False
-        self.save()
-
-    def expire(self):
-        """Помечает подписку как истекшую"""
-        self.status = 'expired'
-        self.save()
+        """Проверяет, активна ли подписка."""
+        return self.status == 'active' and self.end_date > timezone.now()
 
     def activate(self):
-        """Активирует подписку"""
+        """Активирует подписку."""
         self.status = 'active'
         self.start_date = timezone.now()
         self.end_date = self.start_date + timedelta(days=self.plan.duration_days)
         self.save()
 
+    def cancel(self):
+        """Отменяет подписку."""
+        self.status = 'cancelled'
+        self.auto_renew = False
+        self.save()
 
-class PinnedPost(models.Model):
-    """Модель закрепленного поста"""
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='pinned_post'
-    )
-    post = models.OneToOneField(
-        'main.Post',
-        on_delete=models.CASCADE,
-        related_name='pin_info'
-    )
-    pinned_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'pinned_posts'
-        verbose_name = 'Pinned Post'
-        verbose_name_plural = 'Pinned Posts'
-        ordering = ['pinned_at']
-        indexes = [
-            models.Index(fields=['pinned_at']),
-        ]
-
-    def __str__(self):
-        return f"{self.user.username} pinned: {self.post.title}"
-    
-    def save(self, *args, **kwargs):
-        """Переопределяет сохранение для проверки подписки"""
-
-        # проверка на наличие активной подписки
-        if not hasattr(self.user, 'subscription') or not self.user.subscription.is_active:
-            raise ValueError('User must have an active subscription to pin posts.')
-        
-        # проверка принадлежности поста к пользователю
-        if self.post.author != self.user:
-            raise ValueError('User can only pin their own posts.')
-        
-        super().save(*args, **kwargs)
+    def expire(self):
+        """Помечает подписку как истекшую."""
+        self.status = 'expired'
+        self.save()
 
 
 class SubscriptionHistory(models.Model):
-    """История изменений подписки"""
+    """История изменений статуса подписки."""
     ACTION_CHOICES = [
-        ('created', 'Created'),
-        ('activated', 'Activated'),
-        ('renewed', 'Renewed'),
-        ('cancelled', 'Cancelled'),
-        ('expired', 'Expired'),
-        ('payment_failed', 'Payment Failed'),
+        ('created', 'Создана'),
+        ('activated', 'Активирована'),
+        ('renewed', 'Продлена'),
+        ('cancelled', 'Отменена'),
+        ('expired', 'Истекла'),
+        ('payment_failed', 'Ошибка платежа'),
     ]
 
     subscription = models.ForeignKey(
@@ -167,17 +104,15 @@ class SubscriptionHistory(models.Model):
         on_delete=models.CASCADE,
         related_name='history'
     )
-    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
-    description = models.TextField(blank=True)
-    metadata = models.JSONField(default=dict, blank=True)
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES, verbose_name='Действие')
+    description = models.TextField(blank=True, verbose_name='Описание')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'subscription_history'
-        verbose_name = 'Subscription History'
-        verbose_name_plural = 'Subscription History'
+        verbose_name = 'История подписки'
+        verbose_name_plural = 'История подписок'
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.subscription.user.username} - {self.action}"
-
+        return f"{self.subscription.user.username} - {self.get_action_display()}"

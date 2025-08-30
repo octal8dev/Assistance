@@ -17,6 +17,7 @@ class Payment(models.Model):
     PAYMENT_METHOD_CHOICES = [
         ('stripe', 'Stripe'),
         ('paypal', 'PayPal'),
+        ('yoomoney', 'YooMoney'),
         ('manual', 'Manual'),
     ]
 
@@ -42,6 +43,9 @@ class Payment(models.Model):
     stripe_session_id = models.CharField(max_length=255, blank=True, null=True)
     stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
     
+    # YooMoney-специфичные поля
+    yoomoney_payment_id = models.CharField(max_length=255, blank=True, null=True)
+
     # Метаданные
     description = models.TextField(blank=True)
     metadata = models.JSONField(default=dict, blank=True)
@@ -178,6 +182,7 @@ class WebhookEvent(models.Model):
     PROVIDER_CHOICES = [
         ('stripe', 'Stripe'),
         ('paypal', 'PayPal'),
+        ('yoomoney', 'YooMoney'),
     ]
 
     STATUS_CHOICES = [

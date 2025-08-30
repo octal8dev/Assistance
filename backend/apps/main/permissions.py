@@ -1,14 +1,16 @@
+
 from rest_framework import permissions
 
-
-class IsAuthorOrReadOnly(permissions.BasePermission):
+class IsOwner(permissions.BasePermission):
     """
-    Разрешение, позволяющее редактировать объект только автору
+    Кастомное право доступа, которое разрешает доступ только владельцу объекта.
+    Предполагается, что у модели есть поле `user`.
     """
-    
     def has_object_permission(self, request, view, obj):
-        # Разрешения на чтение для всех
-        if request.method in permissions.SAFE_METHODS:
-            return True
-        # Разрешения на запись только для автора
-        return obj.author == request.user
+        # Для настроек бота, проверяем obj.user
+        if hasattr(obj, 'user'):
+            return obj.user == request.user
+        # Для связанных объектов (например, Prompt), проверяем через bot_settings
+        if hasattr(obj, 'bot_settings'):
+            return obj.bot_settings.user == request.user
+        return False

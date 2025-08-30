@@ -44,12 +44,8 @@ class PaymentSerializer(serializers.ModelSerializer):
         return None
     
 class PaymentCreateSerializer(serializers.Serializer):
-    """Сериализатор для создания платежа"""
+    """Сериализатор для создания платежа (только YooMoney)"""
     subscription_plan_id = serializers.IntegerField()
-    payment_method = serializers.ChoiceField(
-        choices=Payment.PAYMENT_METHOD_CHOICES,
-        default='stripe'
-    )
     success_url = serializers.URLField(required=False)
     cancel_url = serializers.URLField(required=False)
     
@@ -68,13 +64,11 @@ class PaymentCreateSerializer(serializers.Serializer):
         """Общая валидация"""
         user = self.context['request'].user
         
-        # Проверяем, нет ли уже активной подписки
         if hasattr(user, 'subscription') and user.subscription.is_active:
             raise serializers.ValidationError({
                 'non_field_errors': ['User already has an active subscription.']
             })
         
-        # Проверяем, нет ли ожидающих платежей
         pending_payments = Payment.objects.filter(
             user=user,
             status__in=['pending', 'processing']
@@ -88,7 +82,6 @@ class PaymentCreateSerializer(serializers.Serializer):
         return attrs
     
 class PaymentAttemptSerializer(serializers.ModelSerializer):
-    """Сериализатор для попыток платежа"""
     
     class Meta:
         model = PaymentAttempt
@@ -99,7 +92,6 @@ class PaymentAttemptSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 class RefundSerializer(serializers.ModelSerializer):
-    """Сериализатор для возвратов"""
     payment_info = serializers.SerializerMethodField()
     created_by_info = serializers.SerializerMethodField()
     is_partial = serializers.ReadOnlyField()
@@ -116,7 +108,6 @@ class RefundSerializer(serializers.ModelSerializer):
         ]
 
     def get_payment_info(self, obj):
-        """Возвращает информацию о платеже"""
         return {
             'id': obj.payment.id,
             'amount': obj.payment.amount,
@@ -126,7 +117,6 @@ class RefundSerializer(serializers.ModelSerializer):
         }
 
     def get_created_by_info(self, obj):
-        """Возвращает информацию о создавшем возврат"""
         if obj.created_by:
             return {
                 'id': obj.created_by.id,
@@ -135,13 +125,11 @@ class RefundSerializer(serializers.ModelSerializer):
         return None
 
     def validate_amount(self, value):
-        """Валидация суммы возврата"""
         if value <= 0:
             raise serializers.ValidationError("Refund amount must be positive.")
         return value
 
     def validate(self, attrs):
-        """Общая валидация возврата"""
         payment_id = self.context.get('payment_id')
         if payment_id:
             try:
@@ -152,7 +140,6 @@ class RefundSerializer(serializers.ModelSerializer):
             if not payment.can_be_refunded:
                 raise serializers.ValidationError("This payment cannot be refunded.")
             
-            # Проверяем, что сумма возврата не превышает сумму платежа
             total_refunded = payment.refunds.filter(
                 status='succeeded'
             ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0')
@@ -165,21 +152,18 @@ class RefundSerializer(serializers.ModelSerializer):
         return attrs
     
 class RefundCreateSerializer(serializers.ModelSerializer):
-    """Сериализатор для создания возврата"""
     
     class Meta:
         model = Refund
         fields = ['amount', 'reason']
 
     def validate_amount(self, value):
-        """Валидация суммы возврата"""
         if value <= 0:
             raise serializers.ValidationError("Refund amount must be positive.")
         return value
 
 
 class WebhookEventSerializer(serializers.ModelSerializer):
-    """Сериализатор для webhook событий"""
     
     class Meta:
         model = WebhookEvent
@@ -190,14 +174,12 @@ class WebhookEventSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 class StripeCheckoutSessionSerializer(serializers.Serializer):
-    """Сериализатор для создания Stripe Checkout сессии"""
     checkout_url = serializers.URLField(read_only=True)
     session_id = serializers.CharField(read_only=True)
     payment_id = serializers.IntegerField(read_only=True)
 
 
 class PaymentStatusSerializer(serializers.Serializer):
-    """Сериализатор для статуса платежа"""
     payment_id = serializers.IntegerField()
     status = serializers.CharField()
     message = serializers.CharField()

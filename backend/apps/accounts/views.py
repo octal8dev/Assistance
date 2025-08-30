@@ -10,8 +10,10 @@ from .serializers import (
     UserLoginSerializer,
     UserProfileSerializer,
     UserUpdateSerializer,
-    ChangePasswordSerializer
+    ChangePasswordSerializer,
+    GoogleLoginSerializer
 )
+from .services import GoogleAuthService
 
 
 class RegisterView(generics.CreateAPIView):
@@ -54,6 +56,31 @@ class LoginView(generics.GenericAPIView):
             'access': str(refresh.access_token),
             'message': 'User login successfully'
         }, status=status.HTTP_200_OK)
+
+
+class GoogleLoginView(generics.GenericAPIView):
+    """Вход и регистрация через Google"""
+    serializer_class = GoogleLoginSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        access_token = serializer.validated_data['access_token']
+
+        try:
+            user_info = GoogleAuthService.verify_token(access_token)
+            user, created = GoogleAuthService.get_or_create_user(user_info)
+            tokens = GoogleAuthService.get_tokens_for_user(user)
+
+            return Response({
+                'user': UserProfileSerializer(user).data,
+                'access': tokens['access'],
+                'refresh': tokens['refresh'],
+                'message': 'Пользователь успешно вошел через Google'
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
 
 class ProfileView(generics.RetrieveUpdateAPIView):

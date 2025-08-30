@@ -139,3 +139,6 @@ class ChangePasswordSerializer(serializers.Serializer):
         user.save()
         return user
 
+class GoogleLoginSerializer(serializers.Serializer):
+    """Сериализатор для входа через Google."""
+    access_token = serializers.CharField(required=True)

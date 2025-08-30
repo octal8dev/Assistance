@@ -1,15 +1,15 @@
 from rest_framework import serializers
 from django.utils import timezone
-from .models import SubscriptionPlan, Subscription, PinnedPost, SubscriptionHistory
+from .models import SubscriptionPlan, Subscription, SubscriptionHistory
 
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
     """Сериализатор для тарифных планов"""
-    
+
     class Meta:
         model = SubscriptionPlan
         fields = [
-            'id', 'name', 'price', 'duration_days', 'features', 
+            'id', 'name', 'price', 'duration_days', 'features',
             'is_active', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
@@ -20,10 +20,10 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
 
         # Убедиться, что feauters - это объект
         if not data.get('features'):
-            data['feauters'] = {}
+            data['features'] = {}
 
         return data
-    
+
 
 class SubscriptionSerializer(serializers.ModelSerializer):
     """Сериализатор для подписки"""
@@ -31,7 +31,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
     user_info = serializers.SerializerMethodField()
     is_active = serializers.ReadOnlyField()
     days_remaining = serializers.ReadOnlyField()
-    
+
     class Meta:
         model = Subscription
         fields = [
@@ -52,11 +52,11 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             'full_name': obj.user.full_name,
             'email': obj.user.email,
         }
-    
+
 
 class SubscriptionCreateSerializer(serializers.ModelSerializer):
     """Сериализатор для создания подписки"""
-    
+
     class Meta:
         model = Subscription
         fields = ['plan']
@@ -66,7 +66,7 @@ class SubscriptionCreateSerializer(serializers.ModelSerializer):
         if not value.is_active:
             raise serializers.ValidationError('Selected plan is not active.')
         return value
-    
+
     def validate(self, attrs):
         '''Общая валидация'''
         user = self.context['request'].user
@@ -76,9 +76,9 @@ class SubscriptionCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'non_field_errors': ['User already has an active subscription.']
             })
-        
+
         return attrs
-    
+
     def create(self, validated_data):
         """Создает подписку"""
         validated_data['user'] = self.context['request'].user
@@ -88,62 +88,9 @@ class SubscriptionCreateSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class PinnedPostSerializer(serializers.ModelSerializer):
-    """Сериализатор для закрепленного поста"""
-    post_info = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = PinnedPost
-        fields = ['id', 'post', 'post_info', 'pinned_at']
-        read_only_fields = ['id', 'pinned_at']
-
-    def get_post_info(self, obj):
-        """Возвращает информацию о посте"""
-        return {
-            'id': obj.post.id,
-            'title': obj.post.title,
-            'slug': obj.post.slug,
-            'content': obj.post.content,
-            'image': obj.post.image,
-            'views_count': obj.post.views_count,
-            'created_at': obj.post.created_at,
-        }
-    
-    def validate_post(self, value):
-        """Валидация поста для закрепления"""
-        user = self.context['request'].user
-
-        # Проверяем, что пост принадлежит пользователю
-        if value.author != user:
-            raise serializers.ValidationError('You can ony pinned your posts.')
-        
-        # Проверяем, что пост опубликован
-        if value.status != 'published':
-            raise serializers.ValidationError('Only published posts can be pinned.')
-        
-        return value
-    
-    def validete(self, attrs):
-        """Общая валидация"""
-        user = self.context['request'].user
-
-        # Проверяем, есть ли активная подписка
-        if not hasattr(user, 'subscription') or not user.subscription.is_active:
-            raise serializers.ValidationError({
-                'non_field_errors': ['Active subscription required to pin posts.']
-            })
-        
-        return attrs
-    
-    def create(self, validated_data):
-        """Создает закрепленный пост"""
-        validated_data['user'] = self.context['request'].user
-        return super().create(validated_data)
-    
-
 class SubscriptionHistorySerializer(serializers.ModelSerializer):
     """Сериализатор для истории подписки"""
-    
+
     class Meta:
         model = SubscriptionHistory
         fields = [
@@ -157,8 +104,6 @@ class UserSubscriptionStatusSerializer(serializers.Serializer):
     has_subscription = serializers.BooleanField()
     is_active = serializers.BooleanField()
     subscription = SubscriptionSerializer(allow_null=True)
-    pinned_post = PinnedPostSerializer(allow_null=True)
-    can_pin_posts = serializers.BooleanField()
 
     def to_representation(self, instance):
         """Формирует ответ с информацией о подписке пользователя"""
@@ -166,60 +111,9 @@ class UserSubscriptionStatusSerializer(serializers.Serializer):
         has_subscription = hasattr(user, 'subscription')
         subscription = user.subscription if has_subscription else None
         is_active = subscription.is_active if subscription else False
-        pinned_post = getattr(user, 'pinned_post', None) if is_active else None
 
         return {
             'has_subscription': has_subscription,
             'is_active': is_active,
             'subscription': SubscriptionSerializer(subscription).data if subscription else None,
-            'pinned_post': PinnedPostSerializer(pinned_post).data if pinned_post else None,
-            'can_pin_posts': is_active,
         }
-    
-
-class PinPostSerializer(serializers.Serializer):
-    """Сериализатор для закрепления поста"""
-    post_id = serializers.IntegerField()
-    
-    def validate_post_id(self, value):
-        """Валидация ID поста"""
-        from apps.main.models import Post
-        
-        try:
-            post = Post.objects.get(id=value, status='published')
-        except Post.DoesNotExist:
-            raise serializers.ValidationError("Post not found or not published.")
-        
-        user = self.context['request'].user
-        if post.author != user:
-            raise serializers.ValidationError("You can only pin your own posts.")
-        
-        return value
-
-    def validate(self, attrs):
-        """Общая валидация"""
-        user = self.context['request'].user
-        
-        # Проверяем подписку
-        if not hasattr(user, 'subscription') or not user.subscription.is_active:
-            raise serializers.ValidationError({
-                'non_field_errors': ['Active subscription required to pin posts.']
-            })
-        
-        return attrs
-    
-
-class UnpinPostSerializer(serializers.Serializer):
-    """Сериализатор для открепления поста"""
-    
-    def validate(self, attrs):
-        """Валидация открепления поста"""
-        user = self.context['request'].user
-        
-        if not hasattr(user, 'pinned_post'):
-            raise serializers.ValidationError({
-                'non_field_errors': ['No pinned post found.']
-            })
-        
-        return attrs
-    
